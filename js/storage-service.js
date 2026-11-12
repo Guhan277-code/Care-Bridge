@@ -545,3 +545,4 @@ class CarebridgeStorageService {
 }
 
 window.CarebridgeStorage = new CarebridgeStorageService();
+

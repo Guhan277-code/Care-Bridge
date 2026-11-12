@@ -23,3 +23,4 @@ window.CAREBRIDGE_CONFIG = {
     // Clinical Guardrails
     DISCLAIMER: "CAREBRIDGE is a clinician-verified discharge communication and handover platform. It does not provide automated diagnosis, modify prescriptions, or replace healthcare professionals."
 };
+

@@ -1386,3 +1386,4 @@ window.addMedicationRow = addMedicationRow;
 window.handleSaveRecord = handleSaveRecord;
 window.openClarificationModal = openClarificationModal;
 window.submitClarification = submitClarification;
+

@@ -40,3 +40,4 @@ const CarebridgeQRService = {
 };
 
 window.CarebridgeQR = CarebridgeQRService;
+

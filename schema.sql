@@ -231,3 +231,4 @@ BEGIN
     RETURN QUERY SELECT TRUE, v_token.discharge_id, 'Valid'::TEXT;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
