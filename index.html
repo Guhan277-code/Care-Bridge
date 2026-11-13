@@ -63,14 +63,18 @@
     <header
         class="fixed top-0 inset-x-0 z-50 bg-surface/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(23,50,77,0.04)] pt-safe">
         <div class="h-20 px-margin-mobile flex items-center justify-between gap-space-sm">
-            <div class="flex items-center gap-space-sm min-w-0"><img alt="CAREBRIDGE Logo Mark"
-                    class="h-8 w-auto object-contain flex-shrink-0"
-                    src="https://lh3.googleusercontent.com/aida/ALJJyrA2WjGty7zdEYB1NqCBSNpCkniXA1MoEUtJN6TVN6e5k8UMvI_Dymist46VmrxudBILvVO_FzWtwCmUSZjDKO4Owv71-5TLc_i24gQSy_nZGj1FcmSrFnvuyw_jbu-FtKlT6yoJNUnWdVlhqp_83jSD00urQIY1qi3Nt5ugrJfw5QpmXDOl4kuZ0-fVloKj3lfUZnVWmMzzYlsV3Gw8top2ZlaofC2FoM640x4DArhV">
-                <div class="flex flex-col min-w-0">
+            <div class="flex items-center gap-space-sm min-w-0">
+                <div class="h-9 w-9 rounded-xl bg-gradient-to-tr from-primary to-primary-container flex items-center justify-center shadow-md flex-shrink-0 text-white cursor-pointer" onclick="handleLogoClick()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
+                        <path d="M19 10.5V8.5C19 8.22 18.78 8 18.5 8H13.5V3C13.5 2.45 13.05 2 12.5 2H11.5C10.95 2 10.5 2.45 10.5 3V8H5.5C5.22 8 5 8.22 5 8.5V10.5C5 10.78 5.22 11 5.5 11H10.5V16C10.5 16.55 10.95 17 11.5 17H12.5C13.05 17 13.5 16.55 13.5 16V11H18.5C18.78 11 19 10.78 19 10.5Z"/>
+                        <path d="M4 19C4 18.45 4.45 18 5 18H19C19.55 18 20 18.45 20 19C20 19.55 19.55 20 19 20H5C4.45 20 4 19.55 4 19Z" fill-opacity="0.8"/>
+                        <circle cx="12" cy="19" r="2.5" fill="#77f7ed"/>
+                    </svg>
+                </div>
+                <div class="flex flex-col min-w-0 cursor-pointer" onclick="handleLogoClick()">
                     <div class="flex items-center gap-space-xs"><span
                             class="font-headline-sm text-headline-sm text-primary tracking-tight truncate leading-none">CAREBRIDGE</span>
-                    </div><span class="font-label-sm text-label-sm text-text-secondary truncate mt-0.5">Connected
-                        Transitions</span>
+                    </div><span class="font-label-sm text-label-sm text-text-secondary truncate mt-0.5">Connected Transitions</span>
                 </div>
             </div>
             <div class="flex items-center gap-space-xs flex-shrink-0">
@@ -82,9 +86,10 @@
                     class="w-11 h-11 relative flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low transition-colors"
                     type="button"><span class="material-symbols-outlined text-[22px]">notifications</span><span
                         class="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-error ring-2 ring-surface"></span></button>
-                <div class="flex items-center pl-0.5"><img alt="Profile"
-                        class="w-8 h-8 rounded-full object-cover ring-2 ring-primary/20"
-                        src="https://lh3.googleusercontent.com/aida-public/AB6AXuCOlFhscR31ppMYWv3iOujQfz3eV6x_sqoLZlKE86yAdqT6tXRn5Q18EgeYaIb77Qx0QkOgUWuJPOzAf58SImx8Ii7F9J4rXa8QzxjXo683OpRhAA0AV1jTfmjhdTFlP4fdDr-0RV7TF0YWmkY6kjn5H2qrc7uD0DnY7SE12xqOiEWV__N-i_BDia-HV59nJFpU_Por0y4fUpI32ppopd4mpgGNMw6I58FKYBjpvaqs">
+                <div class="flex items-center pl-0.5" id="header-user-avatar-container">
+                    <button id="header-user-btn" onclick="openUserMenu()" class="w-8 h-8 rounded-full bg-primary-container text-white font-bold text-xs flex items-center justify-center ring-2 ring-primary/20 hover:ring-primary shadow-sm transition-all" title="User Profile & Role">
+                        <span id="header-user-initials">CB</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -123,10 +128,8 @@
                     <div class="flex items-start justify-between gap-3">
                         <div class="flex items-center gap-3 min-w-0">
                             <div
-                                class="relative w-12 h-12 rounded-xl overflow-hidden bg-surface-container flex-shrink-0">
-                                <img class="w-full h-full object-cover"
-                                    data-alt="Warm and respectful headshot portrait of an Indian gentleman in his late 50s with dignified expression, soft natural clinical lighting, neutral hospital ambient backdrop in serene cyan and ivory tones"
-                                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuC79uzfeAfG5hX8nE4MvijOLxHXKPD2lrPalu6nAaUXMrgUrGlWM2ECm-qBkB2HOjkjsKCUx8no6SMVB2h95ScZidUHHwFGGP8MyKmDwNimvwFyqaFVBQDbXsrIpOxpcq0unGaM1fova-QiBChUNT6JtqAbWhMEboto0ZupvXqx7JhKT5t_PzHNcf6v7v5e8ojKoAPhypFhjEw2qeWgGQ4MvJ0r8g79bV_jAflnKb8D">
+                                class="relative w-12 h-12 rounded-xl overflow-hidden bg-primary/10 text-primary border border-primary/20 flex items-center justify-center flex-shrink-0 shadow-sm font-bold text-base">
+                                <span>KV</span>
                             </div>
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2">
@@ -588,7 +591,13 @@
         </div>
         <!-- CAREBRIDGE Application Scripts -->
         <script src="js/config.js"></script>
-        <script src="js/bundle.js"></script>
+        <script src="js/crypto-utils.js"></script>
+        <script src="js/mock-data.js"></script>
+        <script src="js/storage-service.js"></script>
+        <script src="js/audio-service.js"></script>
+        <script src="js/pdf-service.js"></script>
+        <script src="js/qr-service.js"></script>
+        <script src="js/app.js"></script>
     </main>
     <nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-2px_12px_rgba(23,50,77,0.05)]"
         data-active-classes="text-primary font-semibold">

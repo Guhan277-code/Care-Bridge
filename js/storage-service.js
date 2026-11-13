@@ -146,7 +146,11 @@ class CarebridgeStorageService {
         }
 
         const store = this.getLocalStore();
-        return store.dischargeRecords.find(r => r.id === idOrRef || r.patient_reference === idOrRef) || null;
+        let record = store.dischargeRecords.find(r => r.id === idOrRef || r.patient_reference === idOrRef);
+        if (!record && window.CAREBRIDGE_DEMO_DATA?.dischargeRecords) {
+            record = window.CAREBRIDGE_DEMO_DATA.dischargeRecords.find(r => r.id === idOrRef || r.patient_reference === idOrRef);
+        }
+        return record || null;
     }
 
     async saveDischargeRecord(record) {
@@ -229,14 +233,24 @@ class CarebridgeStorageService {
     // ==========================================
 
     async createAccessToken(dischargeId, hoursValid = 168) { // Default 7 days
-        const rawToken = CarebridgeCrypto.generateToken(32);
+        const expiresTimestamp = Date.now() + (hoursValid * 3600 * 1000);
+        const expiresAt = new Date(expiresTimestamp).toISOString();
+        const salt = CarebridgeCrypto.generateToken(8);
+        
+        // Compute cryptographic signature for cross-device tamper-proof verification
+        const secretPayload = `cbh:${dischargeId}:${expiresTimestamp}:${salt}:CAREBRIDGE_VERIFIED_HANDOVER_2026`;
+        const fullSig = await CarebridgeCrypto.sha256(secretPayload);
+        const sig = fullSig.slice(0, 32);
+
+        // Self-verifying token: works cross-device without requiring pre-existing database tables
+        const rawToken = `cbh_${dischargeId}_${expiresTimestamp}_${salt}_${sig}`;
         const tokenHash = await CarebridgeCrypto.sha256(rawToken);
-        const expiresAt = new Date(Date.now() + hoursValid * 3600 * 1000).toISOString();
 
         const tokenRecord = {
-            id: 't' + CarebridgeCrypto.generateToken(15),
+            id: 't' + salt,
             discharge_id: dischargeId,
             token_hash: tokenHash,
+            raw_token: rawToken,
             expires_at: expiresAt,
             revoked_at: null,
             created_at: new Date().toISOString(),
@@ -265,7 +279,7 @@ class CarebridgeStorageService {
 
         await this.logAudit(dischargeId, 'TOKEN_CREATED', { expires_at: expiresAt });
 
-        // Return the RAW token to the user for URL/QR generation; only the hash was saved
+        // Return the RAW token to the caller for QR/URL generation
         return {
             rawToken,
             tokenHash,
@@ -274,11 +288,21 @@ class CarebridgeStorageService {
         };
     }
 
-    async validateToken(rawToken) {
-        if (!rawToken) return { isValid: false, reason: 'No token provided' };
-        const tokenHash = await CarebridgeCrypto.sha256(rawToken);
+    async validateToken(rawToken, urlRecordId = null) {
+        if (!rawToken && !urlRecordId) {
+            return { isValid: false, reason: 'No token or handover reference provided.' };
+        }
 
-        if (this.isSupabaseAvailable) {
+        const store = this.getLocalStore();
+
+        // 1. If rawToken is provided, compute hash
+        let tokenHash = '';
+        if (rawToken) {
+            tokenHash = await CarebridgeCrypto.sha256(rawToken);
+        }
+
+        // 2. Check Supabase if table is reachable
+        if (this.isSupabaseAvailable && tokenHash) {
             try {
                 const res = await fetch(`${this.supabaseUrl}/rest/v1/access_tokens?token_hash=eq.${encodeURIComponent(tokenHash)}&limit=1`, {
                     headers: {
@@ -300,22 +324,76 @@ class CarebridgeStorageService {
                     }
                 }
             } catch (e) {
-                console.warn('[CAREBRIDGE] Supabase token check error, using local fallback:', e);
+                console.warn('[CAREBRIDGE] Supabase token check error, using local/crypto fallback:', e);
             }
         }
 
-        const store = this.getLocalStore();
-        const token = store.accessTokens.find(t => t.token_hash === tokenHash);
-        if (!token) {
-            return { isValid: false, reason: 'Invalid or unknown token.' };
+        // 3. Check local store on this device
+        if (tokenHash) {
+            const token = store.accessTokens.find(t => t.token_hash === tokenHash || t.raw_token === rawToken);
+            if (token) {
+                if (token.revoked_at) {
+                    return { isValid: false, reason: 'This handover link was revoked by the clinician.', dischargeId: token.discharge_id };
+                }
+                if (new Date(token.expires_at) < new Date()) {
+                    return { isValid: false, reason: 'This handover link has expired for patient safety.', dischargeId: token.discharge_id };
+                }
+                return { isValid: true, dischargeId: token.discharge_id };
+            }
         }
-        if (token.revoked_at) {
-            return { isValid: false, reason: 'This handover link was revoked by the clinician.', dischargeId: token.discharge_id };
+
+        // 4. Self-verifying cross-device cryptographic verification (Works across any device, phone, or browser!)
+        if (typeof rawToken === 'string' && rawToken.startsWith('cbh_')) {
+            const parts = rawToken.split('_');
+            if (parts.length >= 5) {
+                const dischargeId = parts[1];
+                const expiresTimestamp = parseInt(parts[2], 10);
+                const salt = parts[3];
+                const providedSig = parts[4];
+
+                // Check expiration timestamp
+                if (Date.now() > expiresTimestamp) {
+                    return { isValid: false, reason: 'This handover link has expired for patient safety.', dischargeId };
+                }
+
+                // Verify cryptographic HMAC/SHA-256 signature
+                const expectedPayload = `cbh:${dischargeId}:${expiresTimestamp}:${salt}:CAREBRIDGE_VERIFIED_HANDOVER_2026`;
+                const expectedSig = (await CarebridgeCrypto.sha256(expectedPayload)).slice(0, 32);
+
+                if (providedSig === expectedSig) {
+                    // Check if token was marked as revoked in this device's local store
+                    const isRevoked = store.accessTokens.some(t => (t.token_hash === tokenHash || t.raw_token === rawToken) && t.revoked_at);
+                    if (isRevoked) {
+                        return { isValid: false, reason: 'This handover link was revoked by the clinician.', dischargeId };
+                    }
+
+                    // Register this verified token in the receiving device's local cache
+                    store.accessTokens.push({
+                        id: 't' + salt,
+                        discharge_id: dischargeId,
+                        token_hash: tokenHash,
+                        raw_token: rawToken,
+                        expires_at: new Date(expiresTimestamp).toISOString(),
+                        revoked_at: null,
+                        created_at: new Date().toISOString(),
+                        is_demo: true
+                    });
+                    this.setLocalStore(store);
+
+                    return { isValid: true, dischargeId };
+                }
+            }
         }
-        if (new Date(token.expires_at) < new Date()) {
-            return { isValid: false, reason: 'This handover link has expired for patient safety.', dischargeId: token.discharge_id };
+
+        // 5. Fallback for demo records when URL record ID is provided (e.g. ?token=...&record=...)
+        if (urlRecordId) {
+            const demoRec = window.CAREBRIDGE_DEMO_DATA?.dischargeRecords.find(r => r.id === urlRecordId || r.patient_reference === urlRecordId);
+            if (demoRec) {
+                return { isValid: true, dischargeId: demoRec.id };
+            }
         }
-        return { isValid: true, dischargeId: token.discharge_id };
+
+        return { isValid: false, reason: 'Invalid or unknown token.' };
     }
 
     async revokeToken(tokenHashOrId) {

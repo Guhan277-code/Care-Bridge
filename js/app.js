@@ -5,13 +5,16 @@
 
 // Application State
 const CarebridgeState = {
-    currentTab: 'discharge-records', // 'dashboard', 'discharge-records', 'create-record', 'patient-portal', 'settings'
+    currentTab: 'login', // 'login', 'dashboard', 'discharge-records', 'create-record', 'patient-portal', 'settings'
+    currentUser: null,   // { role: 'doctor' | 'patient', name, id, ... }
+    isLoggedIn: false,
     activeRecord: null,
     currentLanguage: 'en', // 'en' or 'ta'
     currentDoctor: window.CAREBRIDGE_CONFIG?.DEFAULT_DOCTOR || { name: "Dr. Arun Kumar", title: "MD, DM" },
     filterStatus: 'all',
     searchQuery: '',
-    speechStatus: 'stopped' // 'stopped', 'playing', 'paused'
+    speechStatus: 'stopped', // 'stopped', 'playing', 'paused'
+    isHandoverSession: false
 };
 
 // Global Exposure
@@ -26,6 +29,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tokenParam = urlParams.get('token');
     const recordParam = urlParams.get('record');
 
+    // Restore saved session if available
+    try {
+        const savedSession = sessionStorage.getItem('carebridge_session_user');
+        if (savedSession) {
+            CarebridgeState.currentUser = JSON.parse(savedSession);
+            CarebridgeState.isLoggedIn = true;
+        }
+    } catch (e) {
+        console.warn('[CAREBRIDGE] Session read error:', e);
+    }
+
     // Load initial record
     const records = await window.CarebridgeStorage.getDischargeRecords();
     if (records && records.length > 0) {
@@ -36,9 +50,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         CarebridgeState.activeRecord = window.CAREBRIDGE_DEMO_DATA?.dischargeRecords[0] || null;
     }
 
-    // Initialize bottom navigation
-    setupNavigation();
-
     // Wire global header events
     setupHeaderEvents();
 
@@ -48,10 +59,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateAudioButtonUI(state);
     };
 
-    // If accessed via secure handover token
+    // If accessed via secure handover token (e.g. scanned QR code or handover link)
     if (tokenParam) {
         handleTokenHandover(tokenParam);
+    } else if (CarebridgeState.isLoggedIn && CarebridgeState.currentUser) {
+        // User is logged in: show appropriate view and nav
+        if (CarebridgeState.currentUser.role === 'patient') {
+            CarebridgeState.currentTab = 'patient-portal';
+            setupNavigationForRole('patient');
+        } else {
+            CarebridgeState.currentTab = 'discharge-records';
+            setupNavigationForRole('doctor');
+        }
+        updateUserHeader();
+        renderCurrentView();
     } else {
+        // User not logged in: show login screen and hide nav
+        CarebridgeState.currentTab = 'login';
+        setupNavigationForRole('login');
+        updateUserHeader();
         renderCurrentView();
     }
 
@@ -60,36 +86,99 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ==========================================
-// NAVIGATION CONTROLLER
+// ROLE-BASED NAVIGATION CONTROLLER
 // ==========================================
-function setupNavigation() {
-    const navLinks = document.querySelectorAll('nav [data-path]');
-    navLinks.forEach(link => {
-        link.addEventListener('click', (e) => {
-            e.preventDefault();
-            const targetPath = link.getAttribute('data-path');
-            switchTab(targetPath);
-        });
-    });
+function setupNavigationForRole(role) {
+    const nav = document.querySelector('nav');
+    if (!nav) return;
+
+    if (!CarebridgeState.isLoggedIn || role === 'login') {
+        nav.style.display = 'none';
+        return;
+    }
+
+    nav.style.display = 'block';
+
+    if (role === 'patient') {
+        nav.innerHTML = `
+            <div class="flex justify-around items-center h-20 px-space-xs">
+                <a class="flex flex-col items-center justify-center w-16 h-14 rounded-full ${CarebridgeState.currentTab === 'patient-portal' ? 'text-primary font-semibold' : 'text-text-secondary'} hover:text-on-surface transition-all gap-0.5"
+                    data-path="patient-portal" href="#" onclick="event.preventDefault(); switchTab('patient-portal');">
+                    <span class="material-symbols-outlined text-[24px]">description</span>
+                    <span class="font-label-sm text-[11px]">My Summary</span>
+                </a>
+                <a class="flex flex-col items-center justify-center w-16 h-14 rounded-full text-text-secondary hover:text-on-surface transition-all gap-0.5"
+                    href="#" onclick="event.preventDefault(); playActiveRecordAudio();">
+                    <span class="material-symbols-outlined text-[24px]" id="nav-audio-icon">volume_up</span>
+                    <span class="font-label-sm text-[11px]">Listen</span>
+                </a>
+                <a class="flex flex-col items-center justify-center w-16 h-14 rounded-full text-text-secondary hover:text-on-surface transition-all gap-0.5"
+                    href="#" onclick="event.preventDefault(); setGlobalLanguage(CarebridgeState.currentLanguage === 'en' ? 'ta' : 'en');">
+                    <span class="material-symbols-outlined text-[24px]">translate</span>
+                    <span class="font-label-sm text-[11px]">${CarebridgeState.currentLanguage === 'en' ? 'தமிழ்' : 'English'}</span>
+                </a>
+                <a class="flex flex-col items-center justify-center w-16 h-14 rounded-full text-text-secondary hover:text-error transition-all gap-0.5"
+                    href="#" onclick="event.preventDefault(); logout();" title="Exit Patient Portal">
+                    <span class="material-symbols-outlined text-[24px]">logout</span>
+                    <span class="font-label-sm text-[11px]">Exit</span>
+                </a>
+            </div>
+        `;
+    } else {
+        // Doctor / Clinician role
+        nav.innerHTML = `
+            <div class="flex justify-around items-center h-20 px-space-xs">
+                <a class="flex flex-col items-center justify-center w-14 h-14 rounded-full ${CarebridgeState.currentTab === 'dashboard' ? 'text-primary font-semibold' : 'text-text-secondary'} hover:text-on-surface transition-all gap-0.5"
+                    data-path="dashboard" href="#" onclick="event.preventDefault(); switchTab('dashboard');">
+                    <span class="material-symbols-outlined text-[24px]">grid_view</span>
+                    <span class="font-label-sm text-label-sm">Dashboard</span>
+                </a>
+                <a class="flex flex-col items-center justify-center w-14 h-14 rounded-full ${CarebridgeState.currentTab === 'discharge-records' ? 'text-primary font-semibold' : 'text-text-secondary'} hover:text-on-surface transition-all gap-0.5"
+                    data-path="discharge-records" href="#" onclick="event.preventDefault(); switchTab('discharge-records');">
+                    <span class="material-symbols-outlined text-[24px]">description</span>
+                    <span class="font-label-sm text-label-sm">Records</span>
+                </a>
+                <a aria-label="Create New Discharge Record"
+                    class="flex flex-col items-center justify-center w-14 h-14 rounded-full text-white bg-primary-container shadow-[0_4px_12px_rgba(8,126,139,0.25)] hover:bg-primary transition-all"
+                    data-path="create-record" href="#" onclick="event.preventDefault(); switchTab('create-record');">
+                    <span class="material-symbols-outlined text-[28px]">add</span>
+                </a>
+                <a class="flex flex-col items-center justify-center w-14 h-14 rounded-full ${CarebridgeState.currentTab === 'settings' ? 'text-primary font-semibold' : 'text-text-secondary'} hover:text-on-surface transition-all gap-0.5"
+                    data-path="settings" href="#" onclick="event.preventDefault(); switchTab('settings');">
+                    <span class="material-symbols-outlined text-[24px]">settings</span>
+                    <span class="font-label-sm text-label-sm">Settings</span>
+                </a>
+                <a class="flex flex-col items-center justify-center w-14 h-14 rounded-full text-text-secondary hover:text-error transition-all gap-0.5"
+                    href="#" onclick="event.preventDefault(); logout();" title="Sign Out">
+                    <span class="material-symbols-outlined text-[24px]">logout</span>
+                    <span class="font-label-sm text-label-sm">Logout</span>
+                </a>
+            </div>
+        `;
+    }
 }
 
 function switchTab(path) {
+    // If not logged in and not heading to login
+    if (!CarebridgeState.isLoggedIn && path !== 'login') {
+        path = 'login';
+    }
+
+    // Role protection: patients cannot access doctor-only tabs
+    if (CarebridgeState.isLoggedIn && CarebridgeState.currentUser?.role === 'patient') {
+        if (path === 'create-record' || path === 'dashboard' || path === 'settings' || path === 'discharge-records') {
+            path = 'patient-portal';
+        }
+    }
+
     CarebridgeState.currentTab = path;
 
-    // Update bottom nav active classes
-    const navLinks = document.querySelectorAll('nav [data-path]');
-    navLinks.forEach(link => {
-        const isCurrent = link.getAttribute('data-path') === path;
-        if (isCurrent) {
-            link.classList.add('text-primary', 'font-semibold');
-            link.classList.remove('text-text-secondary');
-            link.setAttribute('aria-current', 'page');
-        } else {
-            link.classList.remove('text-primary', 'font-semibold');
-            link.classList.add('text-text-secondary');
-            link.removeAttribute('aria-current');
-        }
-    });
+    // Refresh nav state
+    if (CarebridgeState.isLoggedIn) {
+        setupNavigationForRole(CarebridgeState.currentUser.role);
+    } else {
+        setupNavigationForRole('login');
+    }
 
     // Stop any ongoing audio narration
     window.CarebridgeAudio.stop();
@@ -107,6 +196,9 @@ function renderCurrentView() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     switch (CarebridgeState.currentTab) {
+        case 'login':
+            renderLoginView(mainEl);
+            break;
         case 'dashboard':
             renderDashboardView(mainEl);
             break;
@@ -123,7 +215,352 @@ function renderCurrentView() {
             renderSettingsView(mainEl);
             break;
         default:
-            renderDischargeRecordView(mainEl);
+            if (!CarebridgeState.isLoggedIn) {
+                renderLoginView(mainEl);
+            } else if (CarebridgeState.currentUser?.role === 'patient') {
+                renderPatientPortalView(mainEl);
+            } else {
+                renderDischargeRecordView(mainEl);
+            }
+    }
+}
+
+// ==========================================
+// USER AUTHENTICATION & ROLE MANAGEMENT
+// ==========================================
+function updateUserHeader() {
+    const initialsEl = document.getElementById('header-user-initials');
+    const btn = document.getElementById('header-user-btn');
+    if (!initialsEl || !btn) return;
+
+    if (!CarebridgeState.isLoggedIn || !CarebridgeState.currentUser) {
+        initialsEl.textContent = '🔒';
+        btn.title = "Not signed in - Click to Login";
+        btn.className = "w-8 h-8 rounded-full bg-surface-container text-text-secondary font-bold text-xs flex items-center justify-center ring-2 ring-outline-variant hover:ring-primary shadow-sm transition-all";
+    } else if (CarebridgeState.currentUser.role === 'doctor') {
+        const docName = CarebridgeState.currentUser.name || 'Dr. Arun';
+        const inits = docName.replace('Dr. ', '').split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('');
+        initialsEl.textContent = inits || 'DR';
+        btn.title = `${CarebridgeState.currentUser.name} (${CarebridgeState.currentUser.title || 'Clinician'}) - Click to switch/logout`;
+        btn.className = "w-8 h-8 rounded-full bg-primary text-white font-bold text-xs flex items-center justify-center ring-2 ring-primary/30 hover:ring-primary shadow-sm transition-all";
+    } else {
+        const patName = CarebridgeState.currentUser.name || 'Patient';
+        const inits = patName.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('');
+        initialsEl.textContent = inits || 'PT';
+        btn.title = `${CarebridgeState.currentUser.name} (Patient: ${CarebridgeState.currentUser.ref || ''}) - Click to exit`;
+        btn.className = "w-8 h-8 rounded-full bg-secondary text-white font-bold text-xs flex items-center justify-center ring-2 ring-secondary/30 hover:ring-secondary shadow-sm transition-all";
+    }
+}
+
+function loginAsDoctor(doctorId, email) {
+    const doctors = window.CAREBRIDGE_DEMO_DATA?.doctors || [];
+    const doc = doctors.find(d => d.id === doctorId || d.email === email) || doctors[0];
+    
+    CarebridgeState.currentUser = {
+        role: 'doctor',
+        id: doc.id,
+        name: doc.name,
+        title: doc.title,
+        department: doc.department,
+        email: doc.email
+    };
+    CarebridgeState.currentDoctor = doc;
+    CarebridgeState.isLoggedIn = true;
+    CarebridgeState.isHandoverSession = false;
+    try {
+        sessionStorage.setItem('carebridge_session_user', JSON.stringify(CarebridgeState.currentUser));
+    } catch (e) {}
+
+    updateUserHeader();
+    setupNavigationForRole('doctor');
+    switchTab('discharge-records');
+}
+
+function loginAsPatient(patientRef) {
+    const ref = patientRef || 'CB-9082';
+    const demoRecords = window.CAREBRIDGE_DEMO_DATA?.dischargeRecords || [];
+    const rec = demoRecords.find(r => r.patient_reference === ref || r.id === ref) || demoRecords[0];
+
+    CarebridgeState.activeRecord = rec;
+    CarebridgeState.currentUser = {
+        role: 'patient',
+        ref: rec.patient_reference,
+        name: rec.patient_name,
+        id: rec.id
+    };
+    CarebridgeState.isLoggedIn = true;
+    CarebridgeState.isHandoverSession = false;
+    try {
+        sessionStorage.setItem('carebridge_session_user', JSON.stringify(CarebridgeState.currentUser));
+    } catch (e) {}
+
+    updateUserHeader();
+    setupNavigationForRole('patient');
+    switchTab('patient-portal');
+}
+
+function logout() {
+    CarebridgeState.currentUser = null;
+    CarebridgeState.isLoggedIn = false;
+    CarebridgeState.isHandoverSession = false;
+    try {
+        sessionStorage.removeItem('carebridge_session_user');
+    } catch (e) {}
+    
+    window.CarebridgeAudio.stop();
+
+    updateUserHeader();
+    setupNavigationForRole('login');
+    switchTab('login');
+}
+
+function handleLogoClick() {
+    if (!CarebridgeState.isLoggedIn) {
+        switchTab('login');
+    } else if (CarebridgeState.currentUser?.role === 'doctor') {
+        switchTab('discharge-records');
+    } else {
+        switchTab('patient-portal');
+    }
+}
+
+function openUserMenu() {
+    const existing = document.getElementById('user-menu-modal');
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    if (!CarebridgeState.isLoggedIn) {
+        switchTab('login');
+        return;
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'user-menu-modal';
+    modal.className = "fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4";
+    
+    const isDoc = CarebridgeState.currentUser.role === 'doctor';
+    modal.innerHTML = `
+        <div class="bg-surface-container-lowest rounded-2xl p-5 max-w-xs w-full shadow-2xl flex flex-col gap-3">
+            <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+                <span class="font-label-lg font-bold text-text-primary">Signed In Account</span>
+                <button class="text-text-secondary hover:text-text-primary text-sm p-1" onclick="document.getElementById('user-menu-modal').remove()">✕</button>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-xl ${isDoc ? 'bg-primary/10 text-primary' : 'bg-secondary/10 text-secondary'} font-bold flex items-center justify-center text-lg">
+                    ${isDoc ? '👨‍⚕️' : '👤'}
+                </div>
+                <div class="min-w-0">
+                    <h3 class="font-headline-sm text-sm font-bold text-text-primary truncate">${CarebridgeState.currentUser.name}</h3>
+                    <p class="font-label-sm text-xs text-text-secondary truncate">${isDoc ? (CarebridgeState.currentUser.title + ' • ' + CarebridgeState.currentUser.department) : ('Ref: ' + (CarebridgeState.currentUser.ref || 'CB-9082'))}</p>
+                    <span class="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${isDoc ? 'bg-primary/10 text-primary' : 'bg-secondary/15 text-secondary'}">
+                        ${isDoc ? 'Clinician Role' : 'Patient / Caregiver'}
+                    </span>
+                </div>
+            </div>
+            <div class="pt-2 flex flex-col gap-2">
+                <button class="w-full py-2 bg-surface-container hover:bg-surface-container-high rounded-lg text-xs font-semibold text-text-primary flex items-center justify-center gap-1.5" onclick="document.getElementById('user-menu-modal').remove(); switchTab('login');">
+                    <span class="material-symbols-outlined text-[16px]">switch_account</span>
+                    Switch Role / Profile
+                </button>
+                <button class="w-full py-2 bg-error/10 hover:bg-error/20 text-error rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5" onclick="document.getElementById('user-menu-modal').remove(); logout();">
+                    <span class="material-symbols-outlined text-[16px]">logout</span>
+                    Sign Out
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+// ==========================================
+// PAGE: LOGIN & ROLE PORTAL
+// ==========================================
+function renderLoginView(container) {
+    const doctors = window.CAREBRIDGE_DEMO_DATA?.doctors || [
+        { id: "d1111111-1111-1111-1111-111111111111", name: "Dr. Arun Kumar", title: "MD, DM (Cardiology)", department: "Cardiology", email: "arun.kumar@demo-hospital.care" }
+    ];
+    const patients = window.CAREBRIDGE_DEMO_DATA?.patients || [
+        { id: "p1111111-1111-1111-1111-111111111111", patient_reference: "CB-9082", full_name: "Kumarasamy V.", ward: "Cardiology • Bay 4B" }
+    ];
+
+    container.innerHTML = `
+        <div class="flex flex-col w-full pb-12 px-gutter-mobile pt-3 max-w-lg mx-auto space-y-4">
+            <!-- Hero Brand Banner -->
+            <div class="bg-surface-container-lowest rounded-2xl p-6 shadow-sm border border-outline-variant/30 flex flex-col items-center text-center gap-3">
+                <div class="h-14 w-14 rounded-2xl bg-gradient-to-tr from-primary to-primary-container flex items-center justify-center shadow-lg text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-8 h-8">
+                        <path d="M19 10.5V8.5C19 8.22 18.78 8 18.5 8H13.5V3C13.5 2.45 13.05 2 12.5 2H11.5C10.95 2 10.5 2.45 10.5 3V8H5.5C5.22 8 5 8.22 5 8.5V10.5C5 10.78 5.22 11 5.5 11H10.5V16C10.5 16.55 10.95 17 11.5 17H12.5C13.05 17 13.5 16.55 13.5 16V11H18.5C18.78 11 19 10.78 19 10.5Z"/>
+                        <path d="M4 19C4 18.45 4.45 18 5 18H19C19.55 18 20 18.45 20 19C20 19.55 19.55 20 19 20H5C4.45 20 4 19.55 4 19Z" fill-opacity="0.8"/>
+                        <circle cx="12" cy="19" r="2.5" fill="#77f7ed"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="font-headline-sm text-2xl font-bold text-primary tracking-tight">CAREBRIDGE</h1>
+                    <p class="font-label-sm text-xs text-text-secondary mt-0.5">Connected Transitions • Clinical Discharge</p>
+                </div>
+                <p class="font-body-md text-sm text-text-secondary max-w-sm">
+                    Clinician-verified discharge communication platform. Select your role below to sign in or explore the demonstration.
+                </p>
+            </div>
+
+            <!-- Role Selector Toggle -->
+            <div class="flex p-1 bg-surface-container rounded-xl shadow-inner">
+                <button id="login-tab-doctor" class="flex-1 py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm bg-surface-container-lowest text-primary flex items-center justify-center gap-1.5" onclick="setLoginRoleTab('doctor')">
+                    <span class="material-symbols-outlined text-[18px]">medical_services</span>
+                    Clinician / Doctor
+                </button>
+                <button id="login-tab-patient" class="flex-1 py-2.5 rounded-lg text-xs font-bold transition-all text-text-secondary hover:text-text-primary flex items-center justify-center gap-1.5" onclick="setLoginRoleTab('patient')">
+                    <span class="material-symbols-outlined text-[18px]">person</span>
+                    Patient / Family
+                </button>
+            </div>
+
+            <!-- Panel 1: Doctor Login -->
+            <div id="doctor-login-panel" class="bg-surface-container-lowest rounded-2xl p-5 shadow-sm border border-outline-variant/30 flex flex-col gap-4">
+                <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-primary text-[22px]">stethoscope</span>
+                        <h2 class="font-label-lg font-bold text-text-primary">Clinician Sign In</h2>
+                    </div>
+                    <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">Doctor Access</span>
+                </div>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block font-label-md text-xs font-semibold text-text-secondary mb-1">Select Clinician Account</label>
+                        <select id="doctor-select" class="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-sm text-text-primary border border-outline-variant/40 focus:outline-none focus:ring-2 focus:ring-primary/20" onchange="onDoctorSelectChange(this.value)">
+                            ${doctors.map(d => `
+                                <option value="${d.id}" data-email="${d.email}">${d.name} — ${d.title} (${d.department})</option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block font-label-md text-xs font-semibold text-text-secondary mb-1">Hospital Email / Clinician ID</label>
+                        <input id="doctor-email" class="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-sm text-text-primary border border-outline-variant/40 focus:outline-none focus:ring-2 focus:ring-primary/20" value="${doctors[0].email}" readonly>
+                    </div>
+
+                    <div>
+                        <label class="block font-label-md text-xs font-semibold text-text-secondary mb-1">Password / Security PIN</label>
+                        <input type="password" class="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-sm text-text-primary border border-outline-variant/40 focus:outline-none focus:ring-2 focus:ring-primary/20" value="demo1234">
+                    </div>
+                </div>
+
+                <div class="pt-2 flex flex-col gap-2.5">
+                    <button class="w-full py-3 rounded-xl bg-primary-container text-white font-label-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-md hover:bg-primary transition-all active:scale-[0.99]" onclick="executeDoctorLogin()">
+                        <span class="material-symbols-outlined text-[18px]">login</span>
+                        Sign In as Clinician
+                    </button>
+                    <button class="w-full py-2.5 rounded-xl bg-primary/10 text-primary font-label-md text-xs font-bold hover:bg-primary/20 transition-all flex items-center justify-center gap-1.5" onclick="loginAsDoctor('d1111111-1111-1111-1111-111111111111', 'arun.kumar@demo-hospital.care')">
+                        <span>⚡</span> 1-Click Clinician Demo Sign In (Dr. Arun Kumar)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Panel 2: Patient Login -->
+            <div id="patient-login-panel" class="hidden bg-surface-container-lowest rounded-2xl p-5 shadow-sm border border-outline-variant/30 flex flex-col gap-4">
+                <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-secondary text-[22px]">health_and_safety</span>
+                        <h2 class="font-label-lg font-bold text-text-primary">Patient & Caregiver Access</h2>
+                    </div>
+                    <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-secondary/15 text-secondary">Patient Portal</span>
+                </div>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block font-label-md text-xs font-semibold text-text-secondary mb-1">Select Patient Record</label>
+                        <select id="patient-select" class="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-sm text-text-primary border border-outline-variant/40 focus:outline-none focus:ring-2 focus:ring-primary/20" onchange="onPatientSelectChange(this.value)">
+                            ${patients.map(p => `
+                                <option value="${p.patient_reference}">${p.patient_reference} • ${p.full_name} (${p.ward})</option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block font-label-md text-xs font-semibold text-text-secondary mb-1">Patient Reference Identifier</label>
+                        <input id="patient-ref-input" class="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-sm text-text-primary border border-outline-variant/40 font-mono" value="CB-9082">
+                    </div>
+
+                    <div>
+                        <label class="block font-label-md text-xs font-semibold text-text-secondary mb-1">Date of Birth / Access PIN</label>
+                        <input type="text" class="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-sm text-text-primary border border-outline-variant/40" value="1966-05-15">
+                    </div>
+                </div>
+
+                <div class="pt-2 flex flex-col gap-2.5">
+                    <button class="w-full py-3 rounded-xl bg-secondary text-white font-label-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-md hover:bg-secondary/90 transition-all active:scale-[0.99]" onclick="executePatientLogin()">
+                        <span class="material-symbols-outlined text-[18px]">verified_user</span>
+                        Access Patient Discharge Booklet
+                    </button>
+                    <button class="w-full py-2.5 rounded-xl bg-secondary/10 text-secondary font-label-md text-xs font-bold hover:bg-secondary/20 transition-all flex items-center justify-center gap-1.5" onclick="loginAsPatient('CB-9082')">
+                        <span>⚡</span> 1-Click Patient Demo Access (CB-9082 • Kumarasamy V.)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Trust & Safety Footer -->
+            <div class="bg-surface-container-low/70 rounded-xl p-4 text-xs text-text-secondary space-y-2 border border-outline-variant/20">
+                <div class="flex items-center gap-2 text-primary font-semibold">
+                    <span class="material-symbols-outlined text-[16px]">verified</span>
+                    <span>Zero-PHI Cryptographic Handover Protocol</span>
+                </div>
+                <p class="leading-relaxed">
+                    QR codes encode only time-limited cryptographic access tokens. No patient names, diagnoses, or medication data are transmitted in public URLs or QR payloads.
+                </p>
+                <p class="text-[11px] text-text-secondary/80 border-t border-surface-container pt-1.5 mt-1">
+                    Statutory Boundary: CAREBRIDGE facilitates clinical discharge communication. It does NOT independently diagnose, prescribe, or alter medical treatment.
+                </p>
+            </div>
+        </div>
+    `;
+}
+
+function onDoctorSelectChange(doctorId) {
+    const sel = document.getElementById('doctor-select');
+    if (!sel) return;
+    const selectedOption = sel.options[sel.selectedIndex];
+    const email = selectedOption?.getAttribute('data-email');
+    const emailInput = document.getElementById('doctor-email');
+    if (emailInput && email) emailInput.value = email;
+}
+
+function executeDoctorLogin() {
+    const sel = document.getElementById('doctor-select');
+    const doctorId = sel?.value || 'd1111111-1111-1111-1111-111111111111';
+    const email = document.getElementById('doctor-email')?.value || 'arun.kumar@demo-hospital.care';
+    loginAsDoctor(doctorId, email);
+}
+
+function onPatientSelectChange(ref) {
+    const refInput = document.getElementById('patient-ref-input');
+    if (refInput) refInput.value = ref;
+}
+
+function executePatientLogin() {
+    const ref = document.getElementById('patient-ref-input')?.value.trim() || 'CB-9082';
+    loginAsPatient(ref);
+}
+
+function setLoginRoleTab(role) {
+    const docTab = document.getElementById('login-tab-doctor');
+    const patTab = document.getElementById('login-tab-patient');
+    const docPanel = document.getElementById('doctor-login-panel');
+    const patPanel = document.getElementById('patient-login-panel');
+    if (!docTab || !patTab || !docPanel || !patPanel) return;
+
+    if (role === 'doctor') {
+        docTab.className = "flex-1 py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm bg-surface-container-lowest text-primary flex items-center justify-center gap-1.5";
+        patTab.className = "flex-1 py-2.5 rounded-lg text-xs font-bold transition-all text-text-secondary hover:text-text-primary flex items-center justify-center gap-1.5";
+        docPanel.classList.remove('hidden');
+        patPanel.classList.add('hidden');
+    } else {
+        patTab.className = "flex-1 py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm bg-surface-container-lowest text-secondary flex items-center justify-center gap-1.5";
+        docTab.className = "flex-1 py-2.5 rounded-lg text-xs font-bold transition-all text-text-secondary hover:text-text-primary flex items-center justify-center gap-1.5";
+        patPanel.classList.remove('hidden');
+        docPanel.classList.add('hidden');
     }
 }
 
@@ -217,8 +654,8 @@ function renderDischargeRecordView(container) {
                 <div class="bg-surface-container-lowest rounded-xl p-4 shadow-sm flex flex-col gap-3">
                     <div class="flex items-start justify-between gap-3">
                         <div class="flex items-center gap-3 min-w-0">
-                            <div class="relative w-12 h-12 rounded-xl overflow-hidden bg-surface-container flex-shrink-0">
-                                <img class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC79uzfeAfG5hX8nE4MvijOLxHXKPD2lrPalu6nAaUXMrgUrGlWM2ECm-qBkB2HOjkjsKCUx8no6SMVB2h95ScZidUHHwFGGP8MyKmDwNimvwFyqaFVBQDbXsrIpOxpcq0unGaM1fova-QiBChUNT6JtqAbWhMEboto0ZupvXqx7JhKT5t_PzHNcf6v7v5e8ojKoAPhypFhjEw2qeWgGQ4MvJ0r8g79bV_jAflnKb8D" alt="Patient portrait">
+                            <div class="relative w-12 h-12 rounded-xl overflow-hidden bg-primary/10 text-primary border border-primary/20 flex items-center justify-center flex-shrink-0 shadow-sm font-bold text-base">
+                                <span>${(record.patient_name || 'PT').split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('')}</span>
                             </div>
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2">
@@ -868,6 +1305,20 @@ function renderPatientPortalView(container) {
 
     container.innerHTML = `
         <div class="flex flex-col w-full pb-8 px-gutter-mobile pt-3 space-y-4">
+            ${CarebridgeState.isHandoverSession ? `
+                <div class="bg-success/15 border border-success/30 rounded-xl p-3.5 flex items-center gap-3 text-success shadow-sm">
+                    <span class="material-symbols-outlined text-[26px] flex-shrink-0" style="font-variation-settings: 'FILL' 1;">verified</span>
+                    <div class="min-w-0">
+                        <span class="font-label-md text-xs font-bold block text-text-primary">
+                            ${isTa ? 'அங்கீகரிக்கப்பட்ட டிஸ்சார்ஜ் அணுகல் சரிபார்க்கப்பட்டது' : 'Authorized Clinician Handover Active'}
+                        </span>
+                        <p class="text-[11px] text-text-secondary leading-snug">
+                            ${isTa ? 'மருத்துவர் சரிபார்த்த டிஸ்சார்ஜ் குறிப்புகள் கிரிப்டோகிராஃபிக் முறையில் உறுதிசெய்யப்பட்டது.' : 'Cryptographically signed clinical discharge instructions verified from hospital.'}
+                        </p>
+                    </div>
+                </div>
+            ` : ''}
+
             <!-- Patient Header Banner -->
             <div class="bg-primary/10 border border-primary/20 rounded-xl p-4 flex items-center justify-between">
                 <div>
@@ -1217,7 +1668,7 @@ function openApprovalSuccessModal(record) {
 // ==========================================
 async function openHandoverModal(dischargeId) {
     const tokenData = await window.CarebridgeStorage.createAccessToken(dischargeId, 168); // 7 days
-    const handoverUrl = `${window.location.origin}${window.location.pathname}?token=${tokenData.rawToken}`;
+    const handoverUrl = `${window.location.origin}${window.location.pathname}?token=${encodeURIComponent(tokenData.rawToken)}&record=${encodeURIComponent(dischargeId)}`;
 
     const modal = document.createElement('div');
     modal.id = 'handover-modal';
@@ -1229,8 +1680,8 @@ async function openHandoverModal(dischargeId) {
                 <button class="text-text-secondary text-sm" onclick="document.getElementById('handover-modal').remove()">✕</button>
             </div>
             
-            <p class="font-body-sm text-text-secondary text-left w-full">
-                This QR code contains a time-limited, cryptographically hashed access link. <strong>Zero Personal Health Information is stored inside the QR code.</strong>
+            <p class="font-body-sm text-text-secondary text-left w-full text-xs">
+                Scan this QR code with any smartphone to open the patient discharge booklet. <strong>Zero Personal Health Information is stored inside the QR code.</strong>
             </p>
 
             <!-- QR Container -->
@@ -1244,11 +1695,15 @@ async function openHandoverModal(dischargeId) {
             </div>
 
             <div class="w-full pt-1 flex flex-col gap-2">
-                <button class="w-full py-2.5 bg-primary-container text-white rounded-lg font-label-md font-semibold flex items-center justify-center gap-1.5" onclick="navigator.clipboard.writeText('${handoverUrl}'); alert('Handover link copied to clipboard!')">
+                <button class="w-full py-2.5 bg-primary-container text-white rounded-lg font-label-md font-semibold flex items-center justify-center gap-1.5 shadow-sm hover:bg-primary transition-all" onclick="navigator.clipboard.writeText('${handoverUrl}'); alert('Handover link copied to clipboard!')">
                     <span class="material-symbols-outlined text-[16px]">content_copy</span>
                     Copy Secure Link
                 </button>
-                <button class="w-full py-2 bg-surface-container text-error rounded-lg text-xs font-medium" onclick="revokeHandoverLink('${tokenData.tokenHash}')">
+                <a href="${handoverUrl}" target="_blank" class="w-full py-2 bg-surface-container text-primary rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-surface-container-high transition-all">
+                    <span class="material-symbols-outlined text-[16px]">open_in_new</span>
+                    Open Handover View In New Tab
+                </a>
+                <button class="w-full py-1.5 text-error rounded-lg text-xs font-medium hover:bg-error/10 transition-all" onclick="revokeHandoverLink('${tokenData.tokenHash}')">
                     Revoke This Access Link
                 </button>
             </div>
@@ -1329,22 +1784,29 @@ async function submitClarification(e, dischargeId) {
 // ==========================================
 async function handleTokenHandover(rawToken) {
     console.log('[CAREBRIDGE] Validating handover token...');
-    const result = await window.CarebridgeStorage.validateToken(rawToken);
+    const urlParams = new URLSearchParams(window.location.search);
+    const recordParam = urlParams.get('record');
+    const result = await window.CarebridgeStorage.validateToken(rawToken, recordParam);
 
     if (!result.isValid) {
+        window.CarebridgeAudio.stop();
+        setupNavigationForRole('login');
         document.querySelector('main').innerHTML = `
-            <div class="px-gutter-mobile py-16 flex flex-col items-center justify-center text-center gap-3">
-                <div class="w-16 h-16 rounded-full bg-error-container text-error flex items-center justify-center">
+            <div class="px-gutter-mobile py-16 flex flex-col items-center justify-center text-center gap-3 max-w-sm mx-auto">
+                <div class="w-16 h-16 rounded-full bg-error-container text-error flex items-center justify-center shadow-sm">
                     <span class="material-symbols-outlined text-[36px]">lock</span>
                 </div>
                 <h1 class="font-headline-md text-text-primary font-bold">Access Denied</h1>
-                <p class="font-body-md text-text-secondary max-w-sm">
+                <p class="font-body-md text-text-secondary text-sm">
                     ${result.reason || 'This handover link is invalid, expired, or has been revoked by the hospital.'}
                 </p>
-                <div class="pt-4">
-                    <button class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold" onclick="window.location.href = window.location.pathname">
-                        Go to Home Portal
+                <div class="pt-4 flex flex-col gap-2 w-full">
+                    <button class="w-full py-2.5 bg-primary text-white rounded-xl text-sm font-semibold shadow-sm hover:bg-primary/90 transition-all" onclick="logout()">
+                        Return to Sign In Portal
                     </button>
+                    <a href="${window.location.pathname}" class="text-xs text-text-secondary hover:text-text-primary">
+                        Clear URL Parameters
+                    </a>
                 </div>
             </div>
         `;
@@ -1352,9 +1814,24 @@ async function handleTokenHandover(rawToken) {
     }
 
     // Token valid: load the exact discharge record
-    const record = await window.CarebridgeStorage.getDischargeRecord(result.dischargeId);
+    const targetRecordId = result.dischargeId || recordParam;
+    const record = await window.CarebridgeStorage.getDischargeRecord(targetRecordId);
     if (record) {
         CarebridgeState.activeRecord = record;
+        CarebridgeState.currentUser = {
+            role: 'patient',
+            name: record.patient_name,
+            ref: record.patient_reference,
+            id: record.id
+        };
+        CarebridgeState.isLoggedIn = true;
+        CarebridgeState.isHandoverSession = true;
+        try {
+            sessionStorage.setItem('carebridge_session_user', JSON.stringify(CarebridgeState.currentUser));
+        } catch (e) {}
+
+        updateUserHeader();
+        setupNavigationForRole('patient');
         switchTab('patient-portal');
     }
 }
@@ -1386,4 +1863,18 @@ window.addMedicationRow = addMedicationRow;
 window.handleSaveRecord = handleSaveRecord;
 window.openClarificationModal = openClarificationModal;
 window.submitClarification = submitClarification;
+
+// Auth & Role Handlers
+window.loginAsDoctor = loginAsDoctor;
+window.loginAsPatient = loginAsPatient;
+window.logout = logout;
+window.openUserMenu = openUserMenu;
+window.handleLogoClick = handleLogoClick;
+window.setLoginRoleTab = setLoginRoleTab;
+window.onDoctorSelectChange = onDoctorSelectChange;
+window.executeDoctorLogin = executeDoctorLogin;
+window.onPatientSelectChange = onPatientSelectChange;
+window.executePatientLogin = executePatientLogin;
+window.setupNavigationForRole = setupNavigationForRole;
+window.updateUserHeader = updateUserHeader;
 
